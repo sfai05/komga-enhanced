@@ -86,6 +86,7 @@ class GalleryDlProcess {
     val mangadexUsername = pluginConfig["mangadex_username"]
     val mangadexPassword = pluginConfig["mangadex_password"]
     val chapterNaming = pluginConfig["chapter_naming"]?.takeIf { it.isNotBlank() }
+    val flaresolverrUrl = pluginConfig["flaresolverr_url"]?.takeIf { it.isNotBlank() }
     val websiteConfigs = getDefaultWebsiteConfigs(defaultLanguage).toMutableMap()
 
     if (!mangadexUsername.isNullOrBlank() || !mangadexPassword.isNullOrBlank()) {
@@ -108,9 +109,16 @@ class GalleryDlProcess {
           mutableMapOf<String, Any>(
             "base-directory" to "",
             "directory" to globalDirectory,
-          ).apply { putAll(websiteConfigs) },
+          ).apply {
+            if (flaresolverrUrl != null) put("flaresolverr", flaresolverrUrl)
+            putAll(websiteConfigs)
+          },
         "postprocessors" to
           listOf(
+            mapOf(
+              "name" to "gigaviewer_unscramble",
+              "condition" to "_scrambled",
+            ),
             mapOf(
               "name" to "zip",
               "extension" to "cbz",
@@ -259,6 +267,16 @@ class GalleryDlProcess {
       "rawkuma" to
         mapOf(
           "directory" to listOf("{chapter_id}"),
+          "filename" to "{page:>03}.{extension}",
+        ),
+      "komiic" to
+        mapOf(
+          "directory" to listOf("{chapter_string}"),
+          "filename" to "{page:>03}.{extension}",
+        ),
+      "tonarinoyj" to
+        mapOf(
+          "directory" to listOf("{chapter_string}"),
           "filename" to "{page:>03}.{extension}",
         ),
     )

@@ -80,6 +80,11 @@ class PluginInitializer(
                   "title": "Chapter Naming Template (gallery-dl directory)",
                   "description": "gallery-dl directory template for chapter folders/CBZ names. Leave blank to keep the per-site default. Common fields: {chapter}, {chapter_minor}, {volume}, {title}, {group}, {lang}. Example: 'c{chapter:>03}{chapter_minor} [{group:J, }]'. WARNING: ChapterMatcher relies on the 'c<num>' prefix — keep it for chapter detection to work.",
                   "default": ""
+                },
+                "flaresolverr_url": {
+                  "type": "string",
+                  "title": "FlareSolverr URL",
+                  "description": "URL of your FlareSolverr instance for bypassing Cloudflare and JS-challenge protected sites (e.g. http://flaresolverr:8191). Required for CopyManga and other protected sources."
                 }
               },
               "required": ["mangadex_username", "mangadex_password"]
