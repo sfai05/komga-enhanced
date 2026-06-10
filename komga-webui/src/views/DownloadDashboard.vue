@@ -230,7 +230,7 @@
                       <v-col cols="12" md="6" class="d-flex align-center">
                         <v-switch
                           v-model="filterHideFollowed"
-                          label="Hide titles already in any follow.txt"
+                          label="Hide titles already in follow list"
                           hide-details
                           dense
                           class="mt-0"
@@ -327,7 +327,7 @@
                         @click="toggleFollow(manga)"
                       >
                         <v-icon x-small left>{{ isFollowed(manga) ? 'mdi-check' : 'mdi-playlist-plus' }}</v-icon>
-                        follow.txt
+                        follow list
                       </v-btn>
                       <v-btn
                         v-if="mangaDexPluginEnabled"
@@ -393,7 +393,7 @@
               </div>
 
               <v-alert v-if="followedUuidsLoadError" type="warning" dense text class="mt-2 mb-0">
-                Could not read follow.txt from: {{ followedUuidsLoadError }}
+                Could not read follow list from: {{ followedUuidsLoadError }}
               </v-alert>
 
               <div v-if="searchDone && searchPageCount > 1" class="d-flex align-center justify-center mt-2">
@@ -443,6 +443,10 @@
                     <v-list-item-icon><v-icon color="warning">mdi-cancel</v-icon></v-list-item-icon>
                     <v-list-item-content>Clear Cancelled ({{ cancelledDownloads.length }})</v-list-item-content>
                   </v-list-item>
+                  <v-list-item @click="clearByStatus('paused')" :disabled="pausedDownloads.length === 0">
+                    <v-list-item-icon><v-icon color="orange">mdi-pause-circle</v-icon></v-list-item-icon>
+                    <v-list-item-content>Clear Paused ({{ pausedDownloads.length }})</v-list-item-content>
+                  </v-list-item>
                   <v-divider></v-divider>
                   <v-list-item @click="clearByStatus('pending')" :disabled="pendingDownloads.length === 0">
                     <v-list-item-icon><v-icon color="grey">mdi-clock-outline</v-icon></v-list-item-icon>
@@ -458,10 +462,23 @@
             <v-card-text>
               <v-tabs v-model="tab">
                 <v-tab>All</v-tab>
-                <v-tab>Pending</v-tab>
-                <v-tab>Downloading</v-tab>
+                <v-tab>
+                  Pending
+                  <v-chip v-if="pendingDownloads.length" x-small color="grey" class="ml-1">{{ pendingDownloads.length }}</v-chip>
+                </v-tab>
+                <v-tab>
+                  Downloading
+                  <v-chip v-if="activeDownloads.length" x-small color="primary" class="ml-1">{{ activeDownloads.length }}</v-chip>
+                </v-tab>
+                <v-tab>
+                  Paused
+                  <v-chip v-if="pausedDownloads.length" x-small color="warning" class="ml-1">{{ pausedDownloads.length }}</v-chip>
+                </v-tab>
                 <v-tab>Completed</v-tab>
-                <v-tab>Failed</v-tab>
+                <v-tab>
+                  Failed
+                  <v-chip v-if="failedDownloads.length" x-small color="error" class="ml-1">{{ failedDownloads.length }}</v-chip>
+                </v-tab>
                 <v-tab>
                   <v-icon left>mdi-cog</v-icon>
                   Configuration
@@ -483,13 +500,16 @@
                   <download-table :downloads="activeDownloads" @action="handleAction" />
                 </v-tab-item>
                 <v-tab-item>
+                  <download-table :downloads="pausedDownloads" @action="handleAction" />
+                </v-tab-item>
+                <v-tab-item>
                   <download-table :downloads="completedDownloads" @action="handleAction" />
                 </v-tab-item>
                 <v-tab-item>
                   <download-table :downloads="failedDownloads" @action="handleAction" />
                 </v-tab-item>
                 <v-tab-item>
-                  <!-- Follow Configuration Tab - Library-based follow.txt -->
+                  <!-- Follow Configuration Tab - Library-based follow list -->
                   <v-row>
                     <v-col cols="12" md="4">
                       <v-card outlined>
@@ -515,23 +535,49 @@
                     <v-col cols="12" md="8">
                       <v-card outlined v-if="selectedLibrary">
                         <v-card-title>
-                          <v-icon left>mdi-file-document-outline</v-icon>
-                          follow.txt - {{ selectedLibrary.name }}
+                          <v-icon left>mdi-bookmark-multiple</v-icon>
+                          Follow List — {{ selectedLibrary.name }}
+                          <v-spacer></v-spacer>
+                          <v-btn small color="primary" @click="openAddFollowDialog">
+                            <v-icon left small>mdi-plus</v-icon>
+                            Add
+                          </v-btn>
                         </v-card-title>
-                        <v-card-subtitle>
-                          Edit the follow.txt file in this library. One URL per line.
-                        </v-card-subtitle>
-                        <v-card-text>
-                          <v-textarea
-                            v-model="followTxtContent"
-                            label="Follow URLs"
-                            hint="MangaDex URLs, one per line. Lines starting with # are comments."
-                            persistent-hint
-                            outlined
-                            rows="12"
-                            placeholder="https://mangadex.org/title/...&#10;# This is a comment"
-                            :loading="loadingFollowTxt"
-                          ></v-textarea>
+                        <v-card-text class="pa-0">
+                          <v-data-table
+                            :headers="followTableHeaders"
+                            :items="followEntries"
+                            :loading="loadingFollows"
+                            dense
+                            class="elevation-0"
+                          >
+                            <template v-slot:item.enabled="{ item }">
+                              <v-switch
+                                v-model="item.enabled"
+                                dense
+                                hide-details
+                                class="mt-0 pt-0"
+                                @change="toggleFollowEnabled(item)"
+                              ></v-switch>
+                            </template>
+                            <template v-slot:item.url="{ item }">
+                              <span class="text-caption text-truncate d-block" style="max-width:220px" :title="item.url">{{ item.url }}</span>
+                            </template>
+                            <template v-slot:item.chapterFrom="{ item }">
+                              {{ item.chapterFrom != null ? item.chapterFrom : '—' }}
+                            </template>
+                            <template v-slot:item.chapterTo="{ item }">
+                              {{ item.chapterTo != null ? item.chapterTo : '—' }}
+                            </template>
+                            <template v-slot:item.actions="{ item }">
+                              <v-btn icon small @click="openEditFollowDialog(item)">
+                                <v-icon small>mdi-pencil</v-icon>
+                              </v-btn>
+                              <v-btn icon small color="error" @click="deleteFollow(item)">
+                                <v-icon small>mdi-delete</v-icon>
+                              </v-btn>
+                            </template>
+                          </v-data-table>
                         </v-card-text>
                         <v-card-actions class="flex-wrap">
                           <v-btn
@@ -551,26 +597,12 @@
                             <v-icon :left="$vuetify.breakpoint.smAndUp">mdi-cloud-upload</v-icon>
                             <span class="d-none d-sm-inline">Sync to MangaDex</span>
                           </v-btn>
-                          <v-spacer></v-spacer>
-                          <v-btn text @click="loadFollowTxt">
-                            <v-icon :left="$vuetify.breakpoint.smAndUp">mdi-refresh</v-icon>
-                            <span class="d-none d-sm-inline">Reload</span>
-                          </v-btn>
-                          <v-btn
-                            color="primary"
-                            @click="saveFollowTxt"
-                            :loading="savingFollowTxt"
-                            :disabled="!followTxtChanged"
-                          >
-                            <v-icon :left="$vuetify.breakpoint.smAndUp">mdi-content-save</v-icon>
-                            <span class="d-none d-sm-inline">Save</span>
-                          </v-btn>
                         </v-card-actions>
                       </v-card>
                       <v-card outlined v-else>
                         <v-card-text class="text-center pa-8">
                           <v-icon size="64" color="grey">mdi-arrow-left</v-icon>
-                          <p class="mt-4">Select a library to edit its follow.txt</p>
+                          <p class="mt-4">Select a library to manage its follow list</p>
                         </v-card-text>
                       </v-card>
 
@@ -654,7 +686,7 @@
                           Import from Tachiyomi/Mihon Backup
                         </v-card-title>
                         <v-card-subtitle>
-                          Import MangaDex URLs from a Tachiyomi or Mihon backup file into a library's follow.txt
+                          Import MangaDex URLs from a Tachiyomi or Mihon backup file into a library's follow list
                         </v-card-subtitle>
                         <v-card-text>
                           <v-file-input
@@ -676,7 +708,7 @@
                             label="Target Library"
                             outlined
                             prepend-icon="mdi-bookshelf"
-                            hint="MangaDex URLs will be added to this library's follow.txt"
+                            hint="MangaDex URLs will be added to this library's follow list"
                             persistent-hint
                             class="mt-4"
                           />
@@ -776,6 +808,55 @@
       </v-row>
     </v-container>
 
+    <!-- Add Follow Dialog -->
+    <v-dialog v-model="addFollowDialog" max-width="500">
+      <v-card>
+        <v-card-title>Add Follow Entry</v-card-title>
+        <v-card-text>
+          <v-text-field v-model="followForm.url" label="URL *" outlined dense hint="Series page URL (MangaDex, tonarinoyj, etc.)" persistent-hint></v-text-field>
+          <v-text-field v-model="followForm.title" label="Title (optional)" outlined dense class="mt-3"></v-text-field>
+          <v-row class="mt-1">
+            <v-col cols="6">
+              <v-text-field v-model.number="followForm.chapterFrom" label="Chapter From" type="number" outlined dense clearable hint="e.g. 50" persistent-hint></v-text-field>
+            </v-col>
+            <v-col cols="6">
+              <v-text-field v-model.number="followForm.chapterTo" label="Chapter To" type="number" outlined dense clearable hint="e.g. 100" persistent-hint></v-text-field>
+            </v-col>
+          </v-row>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn text @click="addFollowDialog = false">Cancel</v-btn>
+          <v-btn color="primary" @click="saveFollow" :loading="savingFollow" :disabled="!followForm.url">Save</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Edit Follow Dialog -->
+    <v-dialog v-model="editFollowDialog" max-width="500">
+      <v-card>
+        <v-card-title>Edit Follow Entry</v-card-title>
+        <v-card-text>
+          <v-text-field v-model="editFollowForm.url" label="URL" outlined dense disabled></v-text-field>
+          <v-text-field v-model="editFollowForm.title" label="Title" outlined dense class="mt-3"></v-text-field>
+          <v-switch v-model="editFollowForm.enabled" label="Enabled" dense hide-details class="mt-2"></v-switch>
+          <v-row class="mt-3">
+            <v-col cols="6">
+              <v-text-field v-model.number="editFollowForm.chapterFrom" label="Chapter From" type="number" outlined dense clearable hint="e.g. 50" persistent-hint></v-text-field>
+            </v-col>
+            <v-col cols="6">
+              <v-text-field v-model.number="editFollowForm.chapterTo" label="Chapter To" type="number" outlined dense clearable hint="e.g. 100" persistent-hint></v-text-field>
+            </v-col>
+          </v-row>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn text @click="editFollowDialog = false">Cancel</v-btn>
+          <v-btn color="primary" @click="saveEditFollow" :loading="savingFollow">Save</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- New Download Dialog -->
     <v-dialog v-model="newDownloadDialog" max-width="600" :fullscreen="$vuetify.breakpoint.xsOnly">
       <v-card>
@@ -861,15 +942,28 @@ export default {
       snackbar: false,
       snackbarText: '',
       snackbarColor: 'success',
-      // Library follow.txt
+      // Library follow list
       selectedLibraryIndex: null,
-      followTxtContent: '',
-      originalFollowTxtContent: '',
-      loadingFollowTxt: false,
-      savingFollowTxt: false,
+      followEntries: [],
+      loadingFollows: false,
       checkingNow: false,
       syncingToMangaDex: false,
       mangaDexPluginEnabled: false,
+      // Add/Edit follow dialogs
+      addFollowDialog: false,
+      editFollowDialog: false,
+      savingFollow: false,
+      editFollowItem: null,
+      followForm: { url: '', title: '', chapterFrom: null, chapterTo: null },
+      editFollowForm: { url: '', title: '', enabled: true, chapterFrom: null, chapterTo: null },
+      followTableHeaders: [
+        { text: 'On', value: 'enabled', sortable: false, width: 60 },
+        { text: 'Title', value: 'title', sortable: true },
+        { text: 'URL', value: 'url', sortable: false },
+        { text: 'From', value: 'chapterFrom', sortable: false, width: 70 },
+        { text: 'To', value: 'chapterTo', sortable: false, width: 70 },
+        { text: '', value: 'actions', sortable: false, width: 88 },
+      ],
       // Scheduler settings
       schedulerEnabled: false,
       schedulerInterval: 6,
@@ -974,7 +1068,7 @@ export default {
     },
     lastSearchSkippedNote() {
       const parts = []
-      if (this.lastSearchSkippedFollow > 0) parts.push(`${this.lastSearchSkippedFollow} already in follow.txt`)
+      if (this.lastSearchSkippedFollow > 0) parts.push(`${this.lastSearchSkippedFollow} already in follow list`)
       if (this.lastSearchSkippedMangaDexFollow > 0) parts.push(`${this.lastSearchSkippedMangaDexFollow} already on MangaDex follow list`)
       if (this.lastSearchSkippedAvailable > 0) parts.push(`${this.lastSearchSkippedAvailable} without downloadable chapters`)
       return parts.length > 0 ? ` (${parts.join(', ')} hidden)` : ''
@@ -1008,6 +1102,9 @@ export default {
     pendingDownloads() {
       return this.downloads.filter(d => d.status === 'PENDING')
     },
+    pausedDownloads() {
+      return this.downloads.filter(d => d.status === 'PAUSED')
+    },
     completedDownloads() {
       return this.downloads.filter(d => d.status === 'COMPLETED')
     },
@@ -1020,9 +1117,6 @@ export default {
     selectedLibrary() {
       if (this.selectedLibraryIndex === null || this.selectedLibraryIndex === undefined) return null
       return this.libraries[this.selectedLibraryIndex]
-    },
-    followTxtChanged() {
-      return this.followTxtContent !== this.originalFollowTxtContent
     },
   },
   mounted() {
@@ -1086,13 +1180,12 @@ export default {
       const seen = new Set()
       const errors = []
       const fetches = (this.libraries || []).map(lib =>
-        this.$http.get(`/api/v1/downloads/follow-txt/${lib.id}`).then(r => {
-          const content = (r.data && r.data.content) || ''
-          const re = /mangadex\.org\/(?:title|manga)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi
-          let m
-          while ((m = re.exec(content)) !== null) {
-            seen.add(m[1].toLowerCase())
-          }
+        this.$komgaFollows.getAll(lib.id).then(entries => {
+          const re = /mangadex\.org\/(?:title|manga)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i
+          entries.forEach(e => {
+            const m = re.exec(e.url)
+            if (m) seen.add(m[1].toLowerCase())
+          })
         }).catch(e => {
           errors.push(`${lib && lib.name}: ${(e && e.message) || 'unknown'}`)
         }),
@@ -1148,33 +1241,32 @@ export default {
         const uuidLower = String(manga.externalId || '').toLowerCase()
         const wantUnfollow = this.isFollowed(manga)
         if (wantUnfollow) {
-          // Find which library contains the URL and remove the line there.
-          const lineRe = new RegExp(`^\\s*https?:\\/\\/mangadex\\.org\\/title\\/${uuidLower}(?:[\\/?#].*)?\\s*$`, 'i')
           let removedAnywhere = false
           for (const lib of this.libraries) {
-            const current = await this.$http.get(`/api/v1/downloads/follow-txt/${lib.id}`)
-            const existing = (current.data && current.data.content) || ''
-            const lines = existing.split(/\r?\n/)
-            const kept = lines.filter(l => !lineRe.test(l))
-            if (kept.length !== lines.length) {
-              const next = kept.join('\n').replace(/\n+$/, '') + (kept.some(l => l.trim()) ? '\n' : '')
-              await this.$http.put(`/api/v1/downloads/follow-txt/${lib.id}`, { content: next })
+            const entries = await this.$komgaFollows.getAll(lib.id)
+            const match = entries.find(e => {
+              const m = /mangadex\.org\/(?:title|manga)\/([0-9a-f-]{36})/i.exec(e.url)
+              return m && m[1].toLowerCase() === uuidLower
+            })
+            if (match) {
+              await this.$komgaFollows.remove(lib.id, match.id)
               removedAnywhere = true
             }
           }
           if (removedAnywhere) {
             this.followedUuids = this.followedUuids.filter(u => u !== uuidLower)
-            this.showSuccess(`Removed from follow.txt: ${manga.title}`)
+            this.showSuccess(`Removed from follow list: ${manga.title}`)
+            if (this.selectedLibrary) this.loadFollows()
           } else {
-            this.showError(`Could not find ${manga.title} in any follow.txt`)
+            this.showError(`Could not find ${manga.title} in any follow list`)
           }
         } else {
-          const current = await this.$http.get(`/api/v1/downloads/follow-txt/${this.searchLibraryId}`)
-          const existing = (current.data && current.data.content) || ''
-          const next = existing.trimEnd() + (existing.trim() ? '\n' : '') + url + '\n'
-          await this.$http.put(`/api/v1/downloads/follow-txt/${this.searchLibraryId}`, { content: next })
+          await this.$komgaFollows.add(this.searchLibraryId, { url, title: manga.title || undefined })
           this.followedUuids = this.followedUuids.concat([uuidLower])
-          this.showSuccess(`Added to follow.txt: ${manga.title}`)
+          this.showSuccess(`Added to follow list: ${manga.title}`)
+          if (this.selectedLibrary && this.selectedLibrary.id === this.searchLibraryId) {
+            this.loadFollows()
+          }
         }
       } catch (e) {
         this.$set(this.searchFollow, manga.externalId, 'error')
@@ -1417,43 +1509,97 @@ export default {
     },
     selectLibrary(index) {
       this.selectedLibraryIndex = index
-      this.loadFollowTxt()
+      this.loadFollows()
     },
-    async loadFollowTxt() {
+    async loadFollows() {
       if (!this.selectedLibrary) return
-      this.loadingFollowTxt = true
+      this.loadingFollows = true
       try {
-        const response = await this.$http.get(`/api/v1/downloads/follow-txt/${this.selectedLibrary.id}`)
-        this.followTxtContent = response.data.content || ''
-        this.originalFollowTxtContent = this.followTxtContent
+        this.followEntries = await this.$komgaFollows.getAll(this.selectedLibrary.id)
       } catch (error) {
-        // File might not exist yet
-        this.followTxtContent = ''
-        this.originalFollowTxtContent = ''
+        this.followEntries = []
       } finally {
-        this.loadingFollowTxt = false
+        this.loadingFollows = false
       }
     },
-    async saveFollowTxt() {
-      if (!this.selectedLibrary) return
-      this.savingFollowTxt = true
+    openAddFollowDialog() {
+      this.followForm = { url: '', title: '', chapterFrom: null, chapterTo: null }
+      this.addFollowDialog = true
+    },
+    async saveFollow() {
+      if (!this.selectedLibrary || !this.followForm.url) return
+      this.savingFollow = true
       try {
-        await this.$http.put(`/api/v1/downloads/follow-txt/${this.selectedLibrary.id}`, {
-          content: this.followTxtContent,
+        const entry = await this.$komgaFollows.add(this.selectedLibrary.id, {
+          url: this.followForm.url,
+          title: this.followForm.title || undefined,
+          chapterFrom: this.followForm.chapterFrom != null ? this.followForm.chapterFrom : undefined,
+          chapterTo: this.followForm.chapterTo != null ? this.followForm.chapterTo : undefined,
         })
-        this.originalFollowTxtContent = this.followTxtContent
-        this.showSuccess('follow.txt saved')
+        this.followEntries.push(entry)
+        this.addFollowDialog = false
+        this.refreshFollowedUuids()
+        this.showSuccess('Follow entry added')
       } catch (error) {
-        this.showError('Failed to save follow.txt: ' + error.message)
+        this.showError('Failed to add: ' + (error.response?.data?.message || error.message))
       } finally {
-        this.savingFollowTxt = false
+        this.savingFollow = false
+      }
+    },
+    openEditFollowDialog(item) {
+      this.editFollowItem = item
+      this.editFollowForm = { url: item.url, title: item.title || '', enabled: item.enabled, chapterFrom: item.chapterFrom, chapterTo: item.chapterTo }
+      this.editFollowDialog = true
+    },
+    async saveEditFollow() {
+      if (!this.editFollowItem || !this.selectedLibrary) return
+      this.savingFollow = true
+      try {
+        const updated = await this.$komgaFollows.update(this.selectedLibrary.id, this.editFollowItem.id, {
+          title: this.editFollowForm.title || null,
+          enabled: this.editFollowForm.enabled,
+          chapterFrom: this.editFollowForm.chapterFrom != null ? this.editFollowForm.chapterFrom : undefined,
+          chapterTo: this.editFollowForm.chapterTo != null ? this.editFollowForm.chapterTo : undefined,
+          clearChapterFrom: this.editFollowForm.chapterFrom == null,
+          clearChapterTo: this.editFollowForm.chapterTo == null,
+        })
+        const idx = this.followEntries.findIndex(e => e.id === updated.id)
+        if (idx >= 0) this.$set(this.followEntries, idx, updated)
+        this.editFollowDialog = false
+        this.showSuccess('Follow entry updated')
+      } catch (error) {
+        this.showError('Failed to update: ' + (error.response?.data?.message || error.message))
+      } finally {
+        this.savingFollow = false
+      }
+    },
+    async toggleFollowEnabled(item) {
+      if (!this.selectedLibrary) return
+      try {
+        const updated = await this.$komgaFollows.update(this.selectedLibrary.id, item.id, { enabled: item.enabled })
+        const idx = this.followEntries.findIndex(e => e.id === updated.id)
+        if (idx >= 0) this.$set(this.followEntries, idx, updated)
+      } catch (error) {
+        item.enabled = !item.enabled
+        this.showError('Failed to update: ' + error.message)
+      }
+    },
+    async deleteFollow(item) {
+      if (!this.selectedLibrary) return
+      try {
+        await this.$komgaFollows.remove(this.selectedLibrary.id, item.id)
+        this.followEntries = this.followEntries.filter(e => e.id !== item.id)
+        this.refreshFollowedUuids()
+        this.showSuccess('Removed from follow list')
+      } catch (error) {
+        this.showError('Failed to remove: ' + error.message)
       }
     },
     async checkNow() {
       if (!this.selectedLibrary) return
       this.checkingNow = true
       try {
-        await this.$http.post(`/api/v1/downloads/follow-txt/${this.selectedLibrary.id}/check-now`)
+        await this.$komgaFollows.checkNow(this.selectedLibrary.id)
         this.showSuccess('Scan started — new chapters will appear automatically.')
       } catch (error) {
         this.showError('Failed to trigger check: ' + error.message)
@@ -1661,12 +1807,11 @@ export default {
         this.tachiyomiResult = result
         if (result.importedCount > 0) {
           this.showSuccess(`Imported ${result.importedCount} manga from Tachiyomi backup`)
-          // Refresh follow.txt if we're on the config tab viewing the same library
           if (this.selectedLibrary && this.selectedLibrary.id === this.tachiyomiLibraryId) {
-            this.loadFollowTxt()
+            this.loadFollows()
           }
         } else if (result.skippedCount > 0) {
-          this.showSuccess('All manga already exist in follow.txt')
+          this.showSuccess('All manga already exist in follow list')
         } else {
           this.showError('No MangaDex manga found in backup')
         }
