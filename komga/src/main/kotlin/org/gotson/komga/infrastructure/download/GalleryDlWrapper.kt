@@ -43,6 +43,7 @@ class GalleryDlWrapper(
     // a runaway feed; a manga with thousands of chapters is well under this.
     private const val MAX_JSON_OUTPUT_SIZE = 32 * 1024 * 1024
     private val progressRegex = """(\d+)%\s+[\d.]+\s*[KMG]?B\s+[\d.]+\s*[KMG]?B/s""".toRegex()
+    private val chapterProgressRegex = """\[(\d+)/(\d+)\]""".toRegex()
 
     fun extractMangaDexId(url: String): String? = MangaDexApiClient.extractMangaDexId(url)
   }
@@ -267,7 +268,9 @@ class GalleryDlWrapper(
             val numStr = chapterNum.toString()
             if (chapterMinor.isNotBlank() && !chapterMinor.startsWith(".")) "$numStr.$chapterMinor" else "$numStr$chapterMinor"
           } else {
-            null
+            // Fallback: parse from chapter_string (e.g. dm5 Chinese "第65话" → "65")
+            val chapterString = metadata["chapter_string"]?.toString() ?: ""
+            Regex("""第(\d+(?:\.\d+)?)[话回]""").find(chapterString)?.groupValues?.get(1)
           }
 
         mapping[chapterUrl] =
@@ -298,6 +301,8 @@ class GalleryDlWrapper(
     destinationPath: Path,
     libraryPath: Path? = null,
     komgaSeriesId: String? = null,
+    chapterFrom: Double? = null,
+    chapterTo: Double? = null,
     isCancelled: () -> Boolean = { false },
     onProcessStarted: (Process) -> Unit = {},
     onProgress: (DownloadProgress) -> Unit = {},
@@ -422,6 +427,14 @@ class GalleryDlWrapper(
             return@filter false
           }
 
+          val num = chapter.chapterNumber?.toDoubleOrNull()
+          if (chapterFrom != null && num != null && num < chapterFrom) {
+            return@filter false
+          }
+          if (chapterTo != null && num != null && num > chapterTo) {
+            return@filter false
+          }
+
           true
         }
 
@@ -532,9 +545,25 @@ class GalleryDlWrapper(
         var resumeInputFile: File? = null
         val effectiveCommand =
           if (galleryDlChapterMap.isEmpty()) {
-            command
+            // Metadata fetch failed/timed out — apply chapter range via gallery-dl native filter
+            command.toMutableList().apply {
+              val filterParts = mutableListOf<String>()
+              if (chapterFrom != null) filterParts.add("chapter >= $chapterFrom")
+              if (chapterTo != null) filterParts.add("chapter <= $chapterTo")
+              if (filterParts.isNotEmpty()) {
+                add("--chapter-filter")
+                add(filterParts.joinToString(" and "))
+              }
+            }
           } else {
-            val needed = galleryDlChapterMap.values.filter { it.chapterNumber?.toDoubleOrNull() !in keptComplete }
+            val needed = galleryDlChapterMap.values.filter {
+              val num = it.chapterNumber?.toDoubleOrNull()
+              if (num != null && num in keptComplete) return@filter false
+              if (chapterFrom != null && num != null && num < chapterFrom) return@filter false
+              if (chapterTo != null && num != null && num > chapterTo) return@filter false
+              true
+            }.sortedBy { it.chapterNumber?.toDoubleOrNull() ?: Double.MAX_VALUE }
+            totalChapters = needed.size
             val inputFile = File.createTempFile("gallery-dl-resume-", ".txt")
             inputFile.writeText(needed.joinToString("\n") { it.chapterUrl })
             resumeInputFile = inputFile
@@ -564,6 +593,7 @@ class GalleryDlWrapper(
 
         onProcessStarted(process)
         var lastProgress = 0
+        val bulkRateLimitHit = java.util.concurrent.atomic.AtomicBoolean(false)
         if (totalChapters > 0) {
           val done = filesDownloaded.get()
           onProgress(DownloadProgress(done, totalChapters, done * 100 / totalChapters, "Resuming download"))
@@ -609,6 +639,20 @@ class GalleryDlWrapper(
               reader.lines().forEach { line ->
                 appendBounded(errorOutput, line)
                 logger.debug { "gallery-dl stderr: $line" }
+                if (line.contains("[komga] rate-limit-hit")) {
+                  bulkRateLimitHit.set(true)
+                  process.destroyForcibly()
+                }
+
+                val chapterMatch = chapterProgressRegex.find(line)
+                if (chapterMatch != null) {
+                  val current = chapterMatch.groupValues[1].toIntOrNull() ?: 0
+                  val total = chapterMatch.groupValues[2].toIntOrNull() ?: totalChapters
+                  val percent = if (total > 0) (current * 100) / total else 0
+                  // Always broadcast on [N/M] — percent alone stalls at 0% for large series (e.g. [1/245] = 0%)
+                  onProgress(DownloadProgress(currentChapter = current, totalChapters = total, percent = percent, message = "Downloading chapter $current/$total"))
+                  if (percent > lastProgress) lastProgress = percent
+                }
 
                 val progress = parseGalleryDlProgress(line, filesDownloaded.get())
                 if (progress != null && progress.percent > lastProgress) {
@@ -638,6 +682,34 @@ class GalleryDlWrapper(
         val exitCode = process.exitValue()
         deleteQuietly(configFile)
         resumeInputFile?.let { deleteQuietly(it) }
+
+        if (exitCode != 0 && bulkRateLimitHit.get()) {
+          // Flatten CBZs from subdirs (same as success path) so the caller can scan them
+          val allFilesOnDisk = destDir.walkTopDown().toList()
+          allFilesOnDisk
+            .filter { it.isFile && it.extension.lowercase() == "cbz" && it.parentFile != destDir }
+            .forEach { cbzFile ->
+              val target = File(destDir, cbzFile.name)
+              if (!target.exists()) {
+                try { java.nio.file.Files.move(cbzFile.toPath(), target.toPath()) } catch (e: Exception) { logger.warn(e) { "Failed to move $cbzFile on rate-limit" } }
+              }
+            }
+          allFilesOnDisk
+            .filter { it.isDirectory && it != destDir && it.listFiles()?.isEmpty() == true }
+            .forEach { deleteQuietly(it) }
+
+          val partialFiles =
+            destDir.listFiles()?.filter { it.isFile && it.extension.lowercase() == "cbz" }?.map { it.absolutePath } ?: emptyList()
+          return DownloadResult(
+            success = false,
+            filesDownloaded = partialFiles.size,
+            downloadedFiles = partialFiles,
+            totalChapters = totalChapters,
+            errorMessage = "Rate limit hit (HTTP 402)",
+            mangaTitle = mangaInfo.title,
+            rateLimitHit = true,
+          )
+        }
 
         if (exitCode != 0) {
           throw GalleryDlException("Download failed with exit code $exitCode: ${errorOutput.toString().trim()}")
@@ -670,6 +742,7 @@ class GalleryDlWrapper(
         val failuresFile = File(destDir, ".chapter-failures.json")
         val chapterFailures = loadChapterFailures(failuresFile)
         val currentMangaDexId = extractMangaDexId(url)
+        var rateLimitHit = false
 
         val externalRedirects = filteredChapters.count { it.pages == 0 && it.externalUrl != null }
         totalChapters = filteredChapters.count { (it.pages > 0 || it.externalUrl == null) && (chapterFailures[it.chapterUrl] ?: 0) < 3 }
@@ -681,6 +754,7 @@ class GalleryDlWrapper(
 
         var downloadIndex = 0
         filteredChapters.forEachIndexed { index, chapter ->
+          if (rateLimitHit) return@forEachIndexed
           if (isCancelled()) {
             saveChapterFailures(failuresFile, chapterFailures)
             logger.debug { "Download cancelled before chapter ${downloadIndex + 1}/$totalChapters, stopping" }
@@ -890,6 +964,11 @@ class GalleryDlWrapper(
               )
             } else {
               val exitCode = chapterProcess.exitValue()
+              if (chapterError.contains("[komga] rate-limit-hit")) {
+                rateLimitHit = true
+                logger.warn { "Rate limit hit (402) for chapter $chapterNum — pausing download" }
+                return@forEachIndexed
+              }
               chapterFailures[chapter.chapterUrl] = failCount + 1
               logger.warn { "Chapter $chapterNum download failed with exit code $exitCode (attempt ${failCount + 1}/3)" }
             }
@@ -902,6 +981,20 @@ class GalleryDlWrapper(
         saveChapterFailures(failuresFile, chapterFailures)
         chapterMatcher.normalizeDoubleBracketFilenames(destDir)
         deleteQuietly(configFile)
+
+        if (rateLimitHit) {
+          val partialFiles =
+            destDir.listFiles()?.filter { it.isFile && it.extension.lowercase() == "cbz" }?.map { it.absolutePath } ?: emptyList()
+          return DownloadResult(
+            success = false,
+            filesDownloaded = filesDownloaded.get(),
+            downloadedFiles = partialFiles,
+            totalChapters = totalChapters,
+            errorMessage = "Rate limit hit (HTTP 402)",
+            mangaTitle = mangaInfo.title,
+            rateLimitHit = true,
+          )
+        }
       }
 
       val downloadedFiles =
@@ -935,6 +1028,12 @@ class GalleryDlWrapper(
         totalChapters = 0,
         errorMessage = e.message ?: "Unknown error",
       )
+    } catch (e: InterruptedException) {
+      // Thread interrupted (server shutdown or forcible kill) — re-throw so the executor
+      // can set the status to PENDING instead of FAILED, allowing recovery on restart.
+      configFileForCleanup?.let { deleteQuietly(it) }
+      Thread.currentThread().interrupt()
+      throw e
     } catch (e: Exception) {
       configFileForCleanup?.let { deleteQuietly(it) }
       logger.error(e) { "Unexpected error downloading: $url" }
@@ -944,7 +1043,7 @@ class GalleryDlWrapper(
         filesDownloaded = 0,
         downloadedFiles = emptyList(),
         totalChapters = 0,
-        errorMessage = "Unexpected error: ${e.message}",
+        errorMessage = "Unexpected error (${e.javaClass.simpleName}): ${e.message ?: "no message"}",
       )
     }
   }
@@ -1557,6 +1656,7 @@ data class DownloadResult(
   val totalChapters: Int,
   val errorMessage: String?,
   val mangaTitle: String? = null,
+  val rateLimitHit: Boolean = false,
 )
 
 class GalleryDlException(
