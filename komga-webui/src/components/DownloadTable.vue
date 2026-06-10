@@ -59,7 +59,7 @@
         </v-btn>
 
         <v-btn
-          v-if="item.status === 'PAUSED' || item.status === 'PENDING'"
+          v-if="item.status === 'PAUSED'"
           icon
           small
           @click="$emit('action', { download: item, action: 'resume' })"
@@ -129,8 +129,7 @@
             <v-col cols="12" sm="3">
               <div class="text-subtitle-2 mb-1">Retries</div>
               <div class="text-body-2">{{ item.retryCount || 0 }} / {{ item.maxRetries || 3 }}</div>
-            </v-col>
-          </v-row>
+            </v-col>          </v-row>
           <v-row v-if="item.destinationPath">
             <v-col cols="12">
               <div class="text-subtitle-2 mb-1">Destination</div>
@@ -142,6 +141,12 @@
               <v-alert type="error" dense text class="mb-0">
                 {{ item.errorMessage }}
               </v-alert>
+            </v-col>
+          </v-row>
+          <v-row v-if="item.resumeAt">
+            <v-col cols="12" sm="6">
+              <div class="text-subtitle-2 mb-1">Auto-resume at</div>
+              <div class="text-body-2">{{ formatDate(item.resumeAt) }} ({{ formatResumeIn(item.resumeAt) }})</div>
             </v-col>
           </v-row>
         </td>
@@ -206,11 +211,17 @@ export default {
       ],
       errorDialog: false,
       selectedError: null,
+      now: new Date(),
+      clockTimer: null,
     }
   },
   mounted() {
     const savedPageSize = this.$store?.state?.persistedState?.dataTablePageSize
     if (savedPageSize) this.itemsPerPage = savedPageSize
+    this.clockTimer = setInterval(() => { this.now = new Date() }, 30000)
+  },
+  beforeDestroy() {
+    if (this.clockTimer) clearInterval(this.clockTimer)
   },
   methods: {
     onItemsPerPageChange(val) {
@@ -246,6 +257,25 @@ export default {
         return date.toLocaleDateString() + ' ' + date.toLocaleTimeString()
       } catch {
         return dateStr
+      }
+    },
+    formatResumeIn(resumeAt) {
+      if (!resumeAt) return ''
+      try {
+        const target = new Date(resumeAt)
+        const diffMs = target - this.now
+        if (diffMs <= 0) return 'resuming soon'
+        const diffMin = Math.floor(diffMs / 60000)
+        const diffSec = Math.floor((diffMs % 60000) / 1000)
+        if (diffMin >= 60) {
+          const h = Math.floor(diffMin / 60)
+          const m = diffMin % 60
+          return `in ${h}h ${m}m`
+        }
+        if (diffMin > 0) return `in ${diffMin}m`
+        return `in ${diffSec}s`
+      } catch {
+        return ''
       }
     },
   },
