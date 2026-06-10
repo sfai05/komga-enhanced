@@ -39,6 +39,9 @@ node_modules
 *.iml
 *.ipr
 
+### VS Code
+.vscode/mcp.json
+
 ### IntelliJ Fleet
 .fleet/
 
