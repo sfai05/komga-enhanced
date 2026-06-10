@@ -97,8 +97,12 @@ class GalleryDlProcess {
     }
 
     if (chapterNaming != null) {
+      // Sites using chapter_string instead of numeric chapter must keep their own directory naming
+      val chapterStringSites = setOf("dm5", "komiic", "tonarinoyj")
       for ((site, cfg) in websiteConfigs.toList()) {
-        websiteConfigs[site] = cfg.toMutableMap().apply { put("directory", listOf(chapterNaming)) }
+        if (site !in chapterStringSites) {
+          websiteConfigs[site] = cfg.toMutableMap().apply { put("directory", listOf(chapterNaming)) }
+        }
       }
     }
 
@@ -267,6 +271,11 @@ class GalleryDlProcess {
       "rawkuma" to
         mapOf(
           "directory" to listOf("{chapter_id}"),
+          "filename" to "{page:>03}.{extension}",
+        ),
+      "dm5" to
+        mapOf(
+          "directory" to listOf("{chapter_string}"),
           "filename" to "{page:>03}.{extension}",
         ),
       "komiic" to
