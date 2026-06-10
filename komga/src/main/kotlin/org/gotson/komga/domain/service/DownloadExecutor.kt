@@ -140,48 +140,59 @@ class DownloadExecutor(
 
       if (retriable.isEmpty()) {
         logger.debug { "No failed downloads to auto-retry" }
-        return
-      }
+      } else {
+        val now = LocalDateTime.now()
+        val toRetry =
+          retriable.filter { download ->
+            val waitMinutes = (download.retryCount + 1) * 5L
+            val lastModified = download.lastModifiedDate
+            java.time.Duration
+              .between(lastModified, now)
+              .toMinutes() >= waitMinutes
+          }
 
-      val now = LocalDateTime.now()
-      val toRetry =
-        retriable.filter { download ->
-          val waitMinutes = (download.retryCount + 1) * 5L
-          val lastModified = download.lastModifiedDate
-          java.time.Duration
-            .between(lastModified, now)
-            .toMinutes() >= waitMinutes
+        if (toRetry.isNotEmpty()) {
+          logger.info { "Auto-retrying ${toRetry.size} failed downloads" }
+          toRetry.forEach { download ->
+            try {
+              retryDownload(download.id)
+              logger.info { "Auto-retry queued: ${download.id} - ${download.title} (attempt ${download.retryCount + 1})" }
+              downloadProgressHandler.broadcastProgress(
+                DownloadProgressDto(
+                  type = "retry",
+                  downloadId = download.id,
+                  mangaTitle = download.title,
+                  url = download.sourceUrl,
+                  status = "PENDING",
+                  currentChapter = null,
+                  totalChapters = download.totalChapters,
+                  completedChapters = null,
+                  filesDownloaded = 0,
+                  percentage = 0,
+                  error = "Auto-retrying (attempt ${download.retryCount + 1}/${download.maxRetries})",
+                ),
+              )
+            } catch (e: Exception) {
+              logger.warn(e) { "Failed to auto-retry download ${download.id}" }
+            }
+          }
         }
-
-      if (toRetry.isEmpty()) {
-        logger.debug { "No failed downloads ready for retry (in backoff period)" }
-        return
       }
 
-      logger.info { "Auto-retrying ${toRetry.size} failed downloads" }
-
-      toRetry.forEach { download ->
-        try {
-          retryDownload(download.id)
-          logger.info { "Auto-retry queued: ${download.id} - ${download.title} (attempt ${download.retryCount + 1})" }
-
-          downloadProgressHandler.broadcastProgress(
-            DownloadProgressDto(
-              type = "retry",
-              downloadId = download.id,
-              mangaTitle = download.title,
-              url = download.sourceUrl,
-              status = "PENDING",
-              currentChapter = null,
-              totalChapters = download.totalChapters,
-              completedChapters = null,
-              filesDownloaded = 0,
-              percentage = 0,
-              error = "Auto-retrying (attempt ${download.retryCount + 1}/${download.maxRetries})",
-            ),
-          )
-        } catch (e: Exception) {
-          logger.warn(e) { "Failed to auto-retry download ${download.id}" }
+      val paused = downloadQueueRepository.findByStatus(DownloadStatus.PAUSED)
+      val now = LocalDateTime.now()
+      paused.forEach { download ->
+        val resumeAt = download.metadataJson?.let {
+          Regex(""""resumeAt"\s*:\s*"([^"]+)"""").find(it)?.groupValues?.get(1)
+            ?.let { ts -> runCatching { LocalDateTime.parse(ts) }.getOrNull() }
+        }
+        if (resumeAt != null && now.isAfter(resumeAt)) {
+          try {
+            resumeDownload(download.id)
+            logger.info { "Auto-resumed rate-limited download: ${download.title ?: download.sourceUrl}" }
+          } catch (e: Exception) {
+            logger.warn(e) { "Failed to auto-resume download ${download.id}" }
+          }
         }
       }
     } catch (e: Exception) {
@@ -195,6 +206,8 @@ class DownloadExecutor(
     title: String?,
     createdBy: String,
     priority: Int = 5,
+    chapterFrom: Double? = null,
+    chapterTo: Double? = null,
   ): DownloadQueue {
     if (libraryId != null) {
       libraryRepository.findByIdOrNull(libraryId)
@@ -229,7 +242,15 @@ class DownloadExecutor(
         destinationPath = null,
         errorMessage = null,
         pluginId = "gallery-dl-downloader",
-        metadataJson = null,
+        metadataJson = if (chapterFrom != null || chapterTo != null) {
+          buildString {
+            append("{")
+            if (chapterFrom != null) append("\"chapterFrom\":$chapterFrom")
+            if (chapterFrom != null && chapterTo != null) append(",")
+            if (chapterTo != null) append("\"chapterTo\":$chapterTo")
+            append("}")
+          }
+        } else null,
         createdBy = createdBy,
         startedDate = null,
         completedDate = null,
@@ -405,8 +426,20 @@ class DownloadExecutor(
   fun isUrlAlreadyQueued(url: String): Boolean =
     downloadQueueRepository.existsBySourceUrlAndStatusIn(
       url,
-      listOf(DownloadStatus.PENDING, DownloadStatus.DOWNLOADING, DownloadStatus.COMPLETED),
+      listOf(DownloadStatus.PENDING, DownloadStatus.DOWNLOADING, DownloadStatus.PAUSED, DownloadStatus.COMPLETED),
     )
+
+  fun isUrlActivelyQueued(url: String): Boolean =
+    downloadQueueRepository.existsBySourceUrlAndStatusIn(
+      url,
+      listOf(DownloadStatus.PENDING, DownloadStatus.DOWNLOADING, DownloadStatus.PAUSED),
+    )
+
+  fun resetCompletedForUrl(url: String) {
+    downloadQueueRepository.findByStatus(DownloadStatus.COMPLETED)
+      .filter { it.sourceUrl == url }
+      .forEach { downloadQueueRepository.delete(it.id) }
+  }
 
   fun setActiveProcess(
     downloadId: String,
@@ -504,12 +537,21 @@ class DownloadExecutor(
       val isCancelled = { cancelledIds.contains(download.id) }
       var lastProgressDbWrite = 0L
 
+      val chapterFrom = download.metadataJson?.let {
+        Regex(""""chapterFrom"\s*:\s*([\d.]+)""").find(it)?.groupValues?.get(1)?.toDoubleOrNull()
+      }
+      val chapterTo = download.metadataJson?.let {
+        Regex(""""chapterTo"\s*:\s*([\d.]+)""").find(it)?.groupValues?.get(1)?.toDoubleOrNull()
+      }
+
       val result =
         galleryDlWrapper.download(
           url = download.sourceUrl,
           destinationPath = destinationPath,
           libraryPath = library?.path,
           komgaSeriesId = komgaSeriesId,
+          chapterFrom = chapterFrom,
+          chapterTo = chapterTo,
           isCancelled = isCancelled,
           onProcessStarted = { process -> setActiveProcess(download.id, process) },
         ) { progress ->
@@ -631,6 +673,53 @@ class DownloadExecutor(
         }
 
         logger.info { "Download completed: ${download.id} - ${result.filesDownloaded} files" }
+      } else if (result.rateLimitHit) {
+        // Read fresh to preserve progress written by the 5-second timer (original snapshot has progress=0)
+        val current = downloadQueueRepository.findByIdOrNull(download.id) ?: download
+        val resumeAt = LocalDateTime.now().plusHours(1)
+        val newMetadata = buildString {
+          append("{")
+          val existing = current.metadataJson
+          if (!existing.isNullOrBlank() && existing != "{}") {
+            append(existing.trimStart('{').trimEnd('}'))
+            append(",")
+          }
+          append("\"resumeAt\":\"$resumeAt\"")
+          append("}")
+        }
+        downloadQueueRepository.update(
+          current.copy(
+            status = DownloadStatus.PAUSED,
+            metadataJson = newMetadata,
+            errorMessage = "Rate limit hit — will auto-resume in ~1 hour",
+            lastModifiedDate = LocalDateTime.now(),
+          ),
+        )
+        logger.warn { "Download rate-limited, pausing until $resumeAt: ${current.title ?: current.sourceUrl}" }
+
+        // Scan partially downloaded chapters into the library so they appear immediately
+        if (library != null && result.filesDownloaded > 0) {
+          synchronized(pendingScanLock) {
+            pendingScans.getOrPut(library.id) { mutableSetOf() }.add(destinationPath)
+          }
+          scanPendingFolders()
+        }
+
+        downloadProgressHandler.broadcastProgress(
+          DownloadProgressDto(
+            type = "paused",
+            downloadId = download.id,
+            mangaTitle = current.title,
+            url = current.sourceUrl,
+            status = "PAUSED",
+            currentChapter = current.currentChapter?.toString(),
+            totalChapters = current.totalChapters,
+            completedChapters = current.currentChapter,
+            filesDownloaded = result.filesDownloaded,
+            percentage = current.progressPercent,
+            error = "Rate limit hit — will auto-resume in ~1 hour",
+          ),
+        )
       } else {
         updateDownloadStatus(
           download,
@@ -663,6 +752,18 @@ class DownloadExecutor(
 
         logger.error { "Download failed: ${download.id} - ${result.errorMessage}" }
       }
+    } catch (e: InterruptedException) {
+      // Server shutdown or thread interrupt mid-download. Reset to PENDING so
+      // recoverStaleDownloads() picks it up on next startup.
+      logger.warn { "Download ${download.id} interrupted (server shutdown?), resetting to PENDING" }
+      downloadQueueRepository.update(
+        download.copy(
+          status = DownloadStatus.PENDING,
+          errorMessage = null,
+          lastModifiedDate = LocalDateTime.now(),
+        ),
+      )
+      Thread.currentThread().interrupt()
     } catch (e: Exception) {
       logger.error(e) { "Error processing download ${download.id}" }
 
