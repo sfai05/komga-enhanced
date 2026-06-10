@@ -10,6 +10,7 @@ import org.gotson.komga.domain.persistence.LibraryRepository
 import org.gotson.komga.domain.service.ChapterChecker
 import org.gotson.komga.domain.service.DownloadExecutor
 import org.gotson.komga.domain.service.DownloadScheduler
+import org.gotson.komga.domain.service.FollowService
 import org.gotson.komga.infrastructure.download.GalleryDlWrapper
 import org.gotson.komga.infrastructure.download.MangaDexSubscriptionSyncer
 import org.gotson.komga.infrastructure.openapi.OpenApiConfiguration.TagNames
@@ -20,8 +21,11 @@ import org.gotson.komga.interfaces.api.rest.dto.ClearResultDto
 import org.gotson.komga.interfaces.api.rest.dto.DownloadActionDto
 import org.gotson.komga.interfaces.api.rest.dto.DownloadCreateDto
 import org.gotson.komga.interfaces.api.rest.dto.DownloadDto
+import org.gotson.komga.interfaces.api.rest.dto.FollowCreationDto
+import org.gotson.komga.interfaces.api.rest.dto.FollowDto
 import org.gotson.komga.interfaces.api.rest.dto.FollowTxtDto
 import org.gotson.komga.interfaces.api.rest.dto.FollowTxtUpdateDto
+import org.gotson.komga.interfaces.api.rest.dto.FollowUpdateDto
 import org.gotson.komga.interfaces.api.rest.dto.SchedulerSettingsDto
 import org.gotson.komga.interfaces.api.rest.dto.SchedulerSettingsUpdateDto
 import org.springframework.http.HttpStatus
@@ -33,6 +37,7 @@ import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
@@ -54,6 +59,7 @@ class DownloadController(
   private val downloadExecutor: DownloadExecutor,
   private val downloadQueueRepository: DownloadQueueRepository,
   private val followConfigRepository: FollowConfigRepository,
+  private val followService: FollowService,
   private val downloadScheduler: DownloadScheduler,
   private val libraryRepository: LibraryRepository,
   private val chapterChecker: ChapterChecker,
@@ -216,6 +222,92 @@ class DownloadController(
         },
       durationMs = summary.durationMs,
     )
+  }
+
+  @GetMapping("follows/{libraryId}")
+  @Operation(summary = "List follow entries for a library", tags = [TagNames.DOWNLOADS])
+  fun getFollows(
+    @PathVariable libraryId: String,
+  ): List<FollowDto> {
+    libraryRepository.findByIdOrNull(libraryId)
+      ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Library not found: $libraryId")
+    return followService.getAll(libraryId).map { it.toDto() }
+  }
+
+  @PostMapping("follows/{libraryId}")
+  @ResponseStatus(HttpStatus.CREATED)
+  @Operation(summary = "Add a follow entry for a library", tags = [TagNames.DOWNLOADS])
+  fun addFollow(
+    @PathVariable libraryId: String,
+    @Valid @RequestBody creation: FollowCreationDto,
+  ): FollowDto {
+    libraryRepository.findByIdOrNull(libraryId)
+      ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Library not found: $libraryId")
+    return try {
+      followService.add(
+        libraryId = libraryId,
+        url = creation.url,
+        title = creation.title,
+        chapterFrom = creation.chapterFrom,
+        chapterTo = creation.chapterTo,
+      ).toDto()
+    } catch (e: IllegalArgumentException) {
+      throw ResponseStatusException(HttpStatus.CONFLICT, e.message)
+    }
+  }
+
+  @PatchMapping("follows/{libraryId}/{id}")
+  @Operation(summary = "Update a follow entry", tags = [TagNames.DOWNLOADS])
+  fun updateFollow(
+    @PathVariable libraryId: String,
+    @PathVariable id: String,
+    @RequestBody update: FollowUpdateDto,
+  ): FollowDto =
+    try {
+      val existing = followService.findById(id)
+      val result = followService.update(
+        id = id,
+        title = update.title,
+        enabled = update.enabled,
+        chapterFrom = update.chapterFrom,
+        chapterTo = update.chapterTo,
+        clearChapterFrom = update.clearChapterFrom,
+        clearChapterTo = update.clearChapterTo,
+      )
+      if (existing != null && (result.chapterFrom != existing.chapterFrom || result.chapterTo != existing.chapterTo)) {
+        downloadExecutor.resetCompletedForUrl(existing.url)
+        followService.clearLastChecked(id)
+      }
+      result.toDto()
+    } catch (e: NoSuchElementException) {
+      throw ResponseStatusException(HttpStatus.NOT_FOUND, e.message)
+    }
+
+  @DeleteMapping("follows/{libraryId}/{id}")
+  @ResponseStatus(HttpStatus.NO_CONTENT)
+  @Operation(summary = "Delete a follow entry", tags = [TagNames.DOWNLOADS])
+  fun deleteFollow(
+    @PathVariable libraryId: String,
+    @PathVariable id: String,
+  ) {
+    followService.delete(id)
+  }
+
+  @PostMapping("follows/{libraryId}/check-now")
+  @Operation(summary = "Trigger immediate check for a library's follow list", tags = [TagNames.DOWNLOADS])
+  fun checkFollowsNow(
+    @PathVariable libraryId: String,
+  ): ResponseEntity<Map<String, String>> {
+    java.util.concurrent.CompletableFuture.runAsync {
+      try {
+        downloadScheduler.checkFollowListNow(libraryId)
+      } catch (e: Exception) {
+        logger.error(e) { "Background follow list check failed for library $libraryId" }
+      }
+    }
+    return ResponseEntity
+      .status(HttpStatus.ACCEPTED)
+      .body(mapOf("message" to "Follow list check started in background"))
   }
 
   @GetMapping("follow-txt/{libraryId}")
@@ -555,4 +647,23 @@ fun org.gotson.komga.domain.model.DownloadQueue.toDto() =
     startedDate = startedDate,
     completedDate = completedDate,
     priority = priority,
+    retryCount = retryCount,
+    maxRetries = maxRetries,
+    resumeAt = metadataJson?.let {
+      Regex(""""resumeAt"\s*:\s*"([^"]+)"""").find(it)?.groupValues?.get(1)
+        ?.let { ts -> runCatching { java.time.LocalDateTime.parse(ts) }.getOrNull() }
+    },
+  )
+
+fun org.gotson.komga.domain.model.Follow.toDto() =
+  FollowDto(
+    id = id,
+    libraryId = libraryId,
+    url = url,
+    title = title,
+    enabled = enabled,
+    chapterFrom = chapterFrom,
+    chapterTo = chapterTo,
+    addedAt = addedAt,
+    lastCheckedAt = lastCheckedAt,
   )

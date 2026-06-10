@@ -1,5 +1,6 @@
 package org.gotson.komga.interfaces.api.rest.dto
 
+import jakarta.validation.constraints.NotBlank
 import java.time.LocalDateTime
 
 data class DownloadDto(
@@ -16,6 +17,9 @@ data class DownloadDto(
   val startedDate: LocalDateTime?,
   val completedDate: LocalDateTime?,
   val priority: Int,
+  val retryCount: Int,
+  val maxRetries: Int,
+  val resumeAt: LocalDateTime?,
 )
 
 data class DownloadCreateDto(
@@ -80,4 +84,32 @@ data class ChapterCheckSummaryDto(
   val errorCount: Int,
   val results: List<ChapterCheckResultDto>,
   val durationMs: Long,
+)
+
+data class FollowDto(
+  val id: String,
+  val libraryId: String,
+  val url: String,
+  val title: String?,
+  val enabled: Boolean,
+  val chapterFrom: Double?,
+  val chapterTo: Double?,
+  val addedAt: LocalDateTime,
+  val lastCheckedAt: LocalDateTime?,
+)
+
+data class FollowCreationDto(
+  @field:NotBlank val url: String,
+  val title: String? = null,
+  val chapterFrom: Double? = null,
+  val chapterTo: Double? = null,
+)
+
+data class FollowUpdateDto(
+  val title: String? = null,
+  val enabled: Boolean? = null,
+  val chapterFrom: Double? = null,
+  val chapterTo: Double? = null,
+  val clearChapterFrom: Boolean = false,
+  val clearChapterTo: Boolean = false,
 )
