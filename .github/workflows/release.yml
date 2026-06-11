@@ -138,6 +138,7 @@ jobs:
           JAR_NAME="komga-${{ steps.versions.outputs.version_next }}.jar"
           mkdir -p docker-build/assembly
           cp "komga/build/libs/${JAR_NAME}" docker-build/assembly/
+          cp "komga/docker/entrypoint.sh" docker-build/
           sed "s/{{distributionArtifactFile}}/${JAR_NAME}/g" komga/docker/Dockerfile.tpl > docker-build/Dockerfile
 
       - name: Compute Docker tags
@@ -145,17 +146,13 @@ jobs:
         run: |
           VER="${{ steps.versions.outputs.version_next }}"
           if [ "${{ inputs.docker_testing }}" = "true" ]; then
-            TAGS="08shiro80/testing:latest"
+            TAGS="sfai05/komga:testing"
           elif [ "${{ inputs.docker_private }}" = "true" ]; then
-            TAGS="08shiro80/komga-private:latest
-          08shiro80/komga-private:${VER}"
+            TAGS="sfai05/komga:private
+          sfai05/komga:private-${VER}"
           else
-            # Public release: tag BOTH the public image and the private test image
-            # from the same build (so the test branch never lags behind the public one)
-            TAGS="08shiro80/komga:latest
-          08shiro80/komga:${VER}
-          08shiro80/komga-private:latest
-          08shiro80/komga-private:${VER}"
+            TAGS="sfai05/komga:latest
+          sfai05/komga:${VER}"
           fi
           {
             echo "tags<<EOF"

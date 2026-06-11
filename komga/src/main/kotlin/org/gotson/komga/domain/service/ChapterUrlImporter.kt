@@ -129,37 +129,61 @@ class ChapterUrlImporter(
   )
 
   private val chapterUuidRegex = Regex("Chapter UUID:\\s*([0-9a-f-]+)")
+  private val uuidFormatRegex = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
   private val chapterNumberCommentRegex = Regex("Chapter:\\s*([\\d.]+)")
   private val volumeCommentRegex = Regex("Volume:\\s*(\\d+)")
+  private val comicInfoWebRegex = Regex("<Web>(.+?)</Web>")
 
   private fun extractChapterFromComment(cbzFile: File): ExtractedChapterData? {
     try {
       ZipFile(cbzFile).use { zf ->
-        val comment = zf.comment ?: return null
-        val chapterUuid =
-          chapterUuidRegex
-            .find(comment)
+        val comment = zf.comment
+        val chapterNumber =
+          comment?.let {
+            chapterNumberCommentRegex
+              .find(it)
+              ?.groupValues
+              ?.get(1)
+              ?.toDoubleOrNull()
+          }
+        val volume =
+          comment?.let {
+            volumeCommentRegex
+              .find(it)
+              ?.groupValues
+              ?.get(1)
+              ?.toIntOrNull()
+          }
+
+        // MangaDex: ZIP comment has a proper UUID in "Chapter UUID: <uuid>" format
+        val uuid = comment?.let { chapterUuidRegex.find(it)?.groupValues?.get(1) }
+        if (uuid != null && uuidFormatRegex.matches(uuid)) {
+          return ExtractedChapterData(
+            url = "https://mangadex.org/chapter/$uuid",
+            chapter = chapterNumber,
+            volume = volume,
+          )
+        }
+
+        // Non-MangaDex: read the chapter URL from ComicInfo.xml <Web> field.
+        // The gallery-dl komga postprocessor sets <Web> to the chapter's webpage_url,
+        // which is the same URL returned by fetchGalleryDlChapterMapping.
+        val entry = zf.getEntry("ComicInfo.xml") ?: return null
+        val xml = zf.getInputStream(entry).use { it.readBytes().toString(Charsets.UTF_8) }
+        val webUrl =
+          comicInfoWebRegex
+            .find(xml)
             ?.groupValues
             ?.get(1)
+            ?.replace("&amp;", "&")
+            ?.replace("&lt;", "<")
+            ?.replace("&gt;", ">")
+            .takeIf { it?.startsWith("http") == true }
             ?: return null
-        return ExtractedChapterData(
-          url = "https://mangadex.org/chapter/$chapterUuid",
-          chapter =
-            chapterNumberCommentRegex
-              .find(comment)
-              ?.groupValues
-              ?.get(1)
-              ?.toDoubleOrNull(),
-          volume =
-            volumeCommentRegex
-              .find(comment)
-              ?.groupValues
-              ?.get(1)
-              ?.toIntOrNull(),
-        )
+        return ExtractedChapterData(url = webUrl, chapter = chapterNumber, volume = volume)
       }
     } catch (e: Exception) {
-      logger.debug { "Failed to read ZIP comment from ${cbzFile.name}: ${e.message}" }
+      logger.debug { "Failed to extract chapter URL from ${cbzFile.name}: ${e.message}" }
       return null
     }
   }

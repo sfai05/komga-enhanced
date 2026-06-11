@@ -256,18 +256,55 @@ class ChapterChecker(
     }
   }
 
-  // Non-MangaDex sources have no stable identifier (URL domain + title both change), so a reliable "already have it?" pre-check isn't possible. Queue unconditionally; the download resume keys off the on-disk CBZ <Number> and re-downloads only the missing chapters.
-  private fun checkNonMangaDexUrl(url: String): ChapterCheckResult =
-    ChapterCheckResult(
-      url = url,
-      mangaId = null,
-      title = null,
-      apiChapterCount = 0,
-      downloadedChapterCount = 0,
-      filesystemChapterCount = 0,
-      newChaptersEstimate = 0,
-      needsDownload = true,
-    )
+  // For non-MangaDex sources we run gallery-dl --simulate to get the available chapter URLs,
+  // then check which are missing from CHAPTER_URL (which has a UNIQUE constraint on url).
+  // This avoids relying on the download queue's COMPLETED status for "already downloaded?" logic.
+  private fun checkNonMangaDexUrl(url: String): ChapterCheckResult {
+    return try {
+      val chapters = galleryDlWrapper.fetchGalleryDlChapterMapping(url)
+      if (chapters.isEmpty()) {
+        // gallery-dl returned nothing — could be a network issue or unsupported URL.
+        // Fall back to queuing so we don't silently miss new chapters.
+        return ChapterCheckResult(
+          url = url,
+          mangaId = null,
+          title = null,
+          apiChapterCount = 0,
+          downloadedChapterCount = 0,
+          filesystemChapterCount = 0,
+          newChaptersEstimate = 0,
+          needsDownload = true,
+        )
+      }
+      val existence = chapterUrlRepository.existsByUrls(chapters.keys)
+      val downloadedCount = existence.values.count { it }
+      val missingCount = existence.values.count { !it }
+      logger.debug { "Non-MangaDex check for $url: total=${chapters.size}, downloaded=$downloadedCount, missing=$missingCount" }
+      ChapterCheckResult(
+        url = url,
+        mangaId = null,
+        title = null,
+        apiChapterCount = chapters.size,
+        downloadedChapterCount = downloadedCount,
+        filesystemChapterCount = 0,
+        newChaptersEstimate = missingCount,
+        needsDownload = missingCount > 0,
+      )
+    } catch (e: Exception) {
+      logger.warn(e) { "Failed to check non-MangaDex URL $url, will attempt download" }
+      ChapterCheckResult(
+        url = url,
+        mangaId = null,
+        title = null,
+        apiChapterCount = 0,
+        downloadedChapterCount = 0,
+        filesystemChapterCount = 0,
+        newChaptersEstimate = 0,
+        needsDownload = true,
+        error = e.message,
+      )
+    }
+  }
 
   private fun findSeriesForManga(
     mangaId: String,

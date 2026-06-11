@@ -5,6 +5,8 @@ import org.gotson.komga.domain.model.FollowConfig
 import org.gotson.komga.domain.persistence.FollowConfigRepository
 import org.gotson.komga.domain.persistence.LibraryRepository
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
+import org.springframework.context.event.ContextRefreshedEvent
+import org.springframework.context.event.EventListener
 import org.springframework.scheduling.TaskScheduler
 import org.springframework.scheduling.support.CronTrigger
 import org.springframework.stereotype.Service
@@ -28,6 +30,8 @@ class DownloadScheduler(
   private val downloadExecutor: DownloadExecutor,
   private val libraryRepository: LibraryRepository,
   private val followConfigRepository: FollowConfigRepository,
+  private val followService: FollowLifecycle,
+  private val followRepository: org.gotson.komga.domain.persistence.FollowRepository,
   private val taskScheduler: TaskScheduler,
   private val chapterChecker: ChapterChecker,
 ) {
@@ -146,6 +150,15 @@ class DownloadScheduler(
     }
   }
 
+  @EventListener(ContextRefreshedEvent::class)
+  fun importFollowTxtOnStartup() {
+    try {
+      followService.importAllLibraries()
+    } catch (e: Exception) {
+      logger.warn(e) { "Failed to auto-import follow.txt entries on startup" }
+    }
+  }
+
   fun getLastCheckTime(libraryId: String): LocalDateTime? = lastCheckTimes[libraryId]
 
   fun checkFollowListNow(libraryId: String) {
@@ -159,31 +172,23 @@ class DownloadScheduler(
             return
           }
 
-      val followListPath = library.path.resolve("follow.txt")
+      val follows = followRepository.findAllByLibraryId(libraryId).filter { it.enabled }
 
-      if (!followListPath.toFile().exists()) {
-        logger.warn { "No follow.txt found in library: ${library.name}" }
+      if (follows.isEmpty()) {
+        logger.info { "No enabled follow entries for library: ${library.name}" }
         return
       }
 
-      val urls =
-        followListPath
-          .toFile()
-          .readLines()
-          .map { it.trim() }
-          .filter { it.isNotEmpty() && !it.startsWith("#") }
-
-      if (urls.isEmpty()) {
-        logger.info { "No URLs in follow.txt for library: ${library.name}" }
-        return
-      }
-
-      logger.info { "Checking ${urls.size} URLs from follow.txt via ChapterChecker" }
+      val urls = follows.map { it.url }
+      logger.info { "Checking ${urls.size} URLs from follow list via ChapterChecker" }
       val summary = chapterChecker.checkUrls(urls)
+
+      val followByUrl = follows.associateBy { it.url }
 
       summary.results
         .filter { it.needsDownload }
         .forEach { result ->
+          val follow = followByUrl[result.url]
           if (!downloadExecutor.isUrlAlreadyQueued(result.url)) {
             try {
               downloadExecutor.createDownload(
@@ -192,10 +197,19 @@ class DownloadScheduler(
                 title = result.title,
                 createdBy = "follow-list",
                 priority = 5,
+                chapterFrom = follow?.chapterFrom,
+                chapterTo = follow?.chapterTo,
               )
-              logger.info { "Queued from follow.txt: ${result.title ?: result.url}" }
+              logger.info { "Queued from follow list: ${result.title ?: result.url}" }
             } catch (e: Exception) {
-              logger.warn(e) { "Failed to queue URL from follow.txt: ${result.url}" }
+              logger.warn(e) { "Failed to queue URL from follow list: ${result.url}" }
+            }
+          }
+          follow?.let {
+            try {
+              followRepository.updateLastChecked(it.id, LocalDateTime.now())
+            } catch (e: Exception) {
+              logger.debug(e) { "Failed to update lastCheckedAt for follow ${it.id}" }
             }
           }
         }
@@ -217,12 +231,8 @@ class DownloadScheduler(
           "${summary.upToDateCount} up to date (${summary.durationMs}ms)"
       }
 
-      val libraries = libraryRepository.findAll()
-      libraries.forEach { library ->
-        val followListPath = library.path.resolve("follow.txt")
-        if (followListPath.toFile().exists()) {
-          checkFollowListNow(library.id)
-        }
+      libraryRepository.findAll().forEach { library ->
+        checkFollowListNow(library.id)
       }
     } catch (e: Exception) {
       logger.error(e) { "Error during scheduled chapter check" }

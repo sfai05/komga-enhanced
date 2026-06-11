@@ -21,8 +21,6 @@ import java.time.LocalDateTime
 
 private val logger = KotlinLogging.logger {}
 
-private val chapterUrlPattern = Regex("mangadex\\.org/chapter/[0-9a-f-]+")
-
 @Service
 class BookMetadataLifecycle(
   private val bookMetadataProviders: List<BookMetadataProvider>,
@@ -92,11 +90,14 @@ class BookMetadataLifecycle(
     patch: BookMetadataPatch,
     book: Book,
   ) {
+    // Accept any HTTP URL from the <Web> ComicInfo field regardless of site.
+    // The gallery-dl komga postprocessor sets <Web> to the chapter's webpage_url,
+    // which is the same URL used as a key in fetchGalleryDlChapterMapping — so
+    // storing it here prevents Check Now from re-queuing already-downloaded chapters.
     val url =
       patch.links
-        ?.firstOrNull { chapterUrlPattern.containsMatchIn(it.url.toString()) }
-        ?.url
-        ?.toString()
+        ?.mapNotNull { it.url?.toString() }
+        ?.firstOrNull { it.startsWith("http") }
         ?: return
 
     val existingUrls = chapterUrlRepository.findUrlsBySeriesId(book.seriesId)
