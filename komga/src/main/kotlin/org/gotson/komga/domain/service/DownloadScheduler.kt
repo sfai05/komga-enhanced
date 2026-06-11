@@ -30,7 +30,7 @@ class DownloadScheduler(
   private val downloadExecutor: DownloadExecutor,
   private val libraryRepository: LibraryRepository,
   private val followConfigRepository: FollowConfigRepository,
-  private val followService: FollowService,
+  private val followService: FollowLifecycle,
   private val followRepository: org.gotson.komga.domain.persistence.FollowRepository,
   private val taskScheduler: TaskScheduler,
   private val chapterChecker: ChapterChecker,

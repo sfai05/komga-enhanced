@@ -12,7 +12,7 @@ import java.util.UUID
 private val logger = KotlinLogging.logger {}
 
 @Service
-class FollowService(
+class FollowLifecycle(
   private val followRepository: FollowRepository,
   private val libraryRepository: LibraryRepository,
 ) {

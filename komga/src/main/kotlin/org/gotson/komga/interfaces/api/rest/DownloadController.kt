@@ -10,7 +10,7 @@ import org.gotson.komga.domain.persistence.LibraryRepository
 import org.gotson.komga.domain.service.ChapterChecker
 import org.gotson.komga.domain.service.DownloadExecutor
 import org.gotson.komga.domain.service.DownloadScheduler
-import org.gotson.komga.domain.service.FollowService
+import org.gotson.komga.domain.service.FollowLifecycle
 import org.gotson.komga.infrastructure.download.GalleryDlWrapper
 import org.gotson.komga.infrastructure.download.MangaDexSubscriptionSyncer
 import org.gotson.komga.infrastructure.openapi.OpenApiConfiguration.TagNames
@@ -59,7 +59,7 @@ class DownloadController(
   private val downloadExecutor: DownloadExecutor,
   private val downloadQueueRepository: DownloadQueueRepository,
   private val followConfigRepository: FollowConfigRepository,
-  private val followService: FollowService,
+  private val followService: FollowLifecycle,
   private val downloadScheduler: DownloadScheduler,
   private val libraryRepository: LibraryRepository,
   private val chapterChecker: ChapterChecker,
