@@ -182,10 +182,14 @@ class DownloadExecutor(
       val paused = downloadQueueRepository.findByStatus(DownloadStatus.PAUSED)
       val now = LocalDateTime.now()
       paused.forEach { download ->
-        val resumeAt = download.metadataJson?.let {
-          Regex(""""resumeAt"\s*:\s*"([^"]+)"""").find(it)?.groupValues?.get(1)
-            ?.let { ts -> runCatching { LocalDateTime.parse(ts) }.getOrNull() }
-        }
+        val resumeAt =
+          download.metadataJson?.let {
+            Regex(""""resumeAt"\s*:\s*"([^"]+)"""")
+              .find(it)
+              ?.groupValues
+              ?.get(1)
+              ?.let { ts -> runCatching { LocalDateTime.parse(ts) }.getOrNull() }
+          }
         if (resumeAt != null && now.isAfter(resumeAt)) {
           try {
             resumeDownload(download.id)
@@ -242,15 +246,18 @@ class DownloadExecutor(
         destinationPath = null,
         errorMessage = null,
         pluginId = "gallery-dl-downloader",
-        metadataJson = if (chapterFrom != null || chapterTo != null) {
-          buildString {
-            append("{")
-            if (chapterFrom != null) append("\"chapterFrom\":$chapterFrom")
-            if (chapterFrom != null && chapterTo != null) append(",")
-            if (chapterTo != null) append("\"chapterTo\":$chapterTo")
-            append("}")
-          }
-        } else null,
+        metadataJson =
+          if (chapterFrom != null || chapterTo != null) {
+            buildString {
+              append("{")
+              if (chapterFrom != null) append("\"chapterFrom\":$chapterFrom")
+              if (chapterFrom != null && chapterTo != null) append(",")
+              if (chapterTo != null) append("\"chapterTo\":$chapterTo")
+              append("}")
+            }
+          } else {
+            null
+          },
         createdBy = createdBy,
         startedDate = null,
         completedDate = null,
@@ -436,7 +443,8 @@ class DownloadExecutor(
     )
 
   fun resetCompletedForUrl(url: String) {
-    downloadQueueRepository.findByStatus(DownloadStatus.COMPLETED)
+    downloadQueueRepository
+      .findByStatus(DownloadStatus.COMPLETED)
       .filter { it.sourceUrl == url }
       .forEach { downloadQueueRepository.delete(it.id) }
   }
@@ -537,12 +545,22 @@ class DownloadExecutor(
       val isCancelled = { cancelledIds.contains(download.id) }
       var lastProgressDbWrite = 0L
 
-      val chapterFrom = download.metadataJson?.let {
-        Regex(""""chapterFrom"\s*:\s*([\d.]+)""").find(it)?.groupValues?.get(1)?.toDoubleOrNull()
-      }
-      val chapterTo = download.metadataJson?.let {
-        Regex(""""chapterTo"\s*:\s*([\d.]+)""").find(it)?.groupValues?.get(1)?.toDoubleOrNull()
-      }
+      val chapterFrom =
+        download.metadataJson?.let {
+          Regex(""""chapterFrom"\s*:\s*([\d.]+)""")
+            .find(it)
+            ?.groupValues
+            ?.get(1)
+            ?.toDoubleOrNull()
+        }
+      val chapterTo =
+        download.metadataJson?.let {
+          Regex(""""chapterTo"\s*:\s*([\d.]+)""")
+            .find(it)
+            ?.groupValues
+            ?.get(1)
+            ?.toDoubleOrNull()
+        }
 
       val result =
         galleryDlWrapper.download(
@@ -677,16 +695,17 @@ class DownloadExecutor(
         // Read fresh to preserve progress written by the 5-second timer (original snapshot has progress=0)
         val current = downloadQueueRepository.findByIdOrNull(download.id) ?: download
         val resumeAt = LocalDateTime.now().plusHours(1)
-        val newMetadata = buildString {
-          append("{")
-          val existing = current.metadataJson
-          if (!existing.isNullOrBlank() && existing != "{}") {
-            append(existing.trimStart('{').trimEnd('}'))
-            append(",")
+        val newMetadata =
+          buildString {
+            append("{")
+            val existing = current.metadataJson
+            if (!existing.isNullOrBlank() && existing != "{}") {
+              append(existing.trimStart('{').trimEnd('}'))
+              append(",")
+            }
+            append("\"resumeAt\":\"$resumeAt\"")
+            append("}")
           }
-          append("\"resumeAt\":\"$resumeAt\"")
-          append("}")
-        }
         downloadQueueRepository.update(
           current.copy(
             status = DownloadStatus.PAUSED,

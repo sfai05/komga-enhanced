@@ -35,16 +35,17 @@ class FollowLifecycle(
     if (followRepository.existsByLibraryIdAndUrl(libraryId, url)) {
       throw IllegalArgumentException("URL already in follow list for this library: $url")
     }
-    val follow = Follow(
-      id = UUID.randomUUID().toString(),
-      libraryId = libraryId,
-      url = url,
-      title = title,
-      enabled = true,
-      chapterFrom = chapterFrom,
-      chapterTo = chapterTo,
-      addedAt = LocalDateTime.now(),
-    )
+    val follow =
+      Follow(
+        id = UUID.randomUUID().toString(),
+        libraryId = libraryId,
+        url = url,
+        title = title,
+        enabled = true,
+        chapterFrom = chapterFrom,
+        chapterTo = chapterTo,
+        addedAt = LocalDateTime.now(),
+      )
     followRepository.insert(follow)
     logger.info { "Added follow entry: ${follow.id} — $url" }
     return follow
@@ -59,14 +60,16 @@ class FollowLifecycle(
     clearChapterFrom: Boolean = false,
     clearChapterTo: Boolean = false,
   ): Follow {
-    val existing = followRepository.findById(id)
-      ?: throw NoSuchElementException("Follow entry not found: $id")
-    val updated = existing.copy(
-      title = title ?: existing.title,
-      enabled = enabled ?: existing.enabled,
-      chapterFrom = if (clearChapterFrom) null else (chapterFrom ?: existing.chapterFrom),
-      chapterTo = if (clearChapterTo) null else (chapterTo ?: existing.chapterTo),
-    )
+    val existing =
+      followRepository.findById(id)
+        ?: throw NoSuchElementException("Follow entry not found: $id")
+    val updated =
+      existing.copy(
+        title = title ?: existing.title,
+        enabled = enabled ?: existing.enabled,
+        chapterFrom = if (clearChapterFrom) null else (chapterFrom ?: existing.chapterFrom),
+        chapterTo = if (clearChapterTo) null else (chapterTo ?: existing.chapterTo),
+      )
     followRepository.update(updated)
     return updated
   }
@@ -80,9 +83,11 @@ class FollowLifecycle(
     val followFile = library.path.resolve("follow.txt").toFile()
     if (!followFile.exists()) return
 
-    val urls = followFile.readLines()
-      .map { it.trim() }
-      .filter { it.isNotEmpty() && !it.startsWith("#") }
+    val urls =
+      followFile
+        .readLines()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() && !it.startsWith("#") }
 
     if (urls.isEmpty()) return
 

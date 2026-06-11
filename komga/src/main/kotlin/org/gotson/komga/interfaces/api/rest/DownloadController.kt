@@ -35,9 +35,9 @@ import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
-import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
@@ -244,13 +244,14 @@ class DownloadController(
     libraryRepository.findByIdOrNull(libraryId)
       ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Library not found: $libraryId")
     return try {
-      followService.add(
-        libraryId = libraryId,
-        url = creation.url,
-        title = creation.title,
-        chapterFrom = creation.chapterFrom,
-        chapterTo = creation.chapterTo,
-      ).toDto()
+      followService
+        .add(
+          libraryId = libraryId,
+          url = creation.url,
+          title = creation.title,
+          chapterFrom = creation.chapterFrom,
+          chapterTo = creation.chapterTo,
+        ).toDto()
     } catch (e: IllegalArgumentException) {
       throw ResponseStatusException(HttpStatus.CONFLICT, e.message)
     }
@@ -265,15 +266,16 @@ class DownloadController(
   ): FollowDto =
     try {
       val existing = followService.findById(id)
-      val result = followService.update(
-        id = id,
-        title = update.title,
-        enabled = update.enabled,
-        chapterFrom = update.chapterFrom,
-        chapterTo = update.chapterTo,
-        clearChapterFrom = update.clearChapterFrom,
-        clearChapterTo = update.clearChapterTo,
-      )
+      val result =
+        followService.update(
+          id = id,
+          title = update.title,
+          enabled = update.enabled,
+          chapterFrom = update.chapterFrom,
+          chapterTo = update.chapterTo,
+          clearChapterFrom = update.clearChapterFrom,
+          clearChapterTo = update.clearChapterTo,
+        )
       if (existing != null && (result.chapterFrom != existing.chapterFrom || result.chapterTo != existing.chapterTo)) {
         downloadExecutor.resetCompletedForUrl(existing.url)
         followService.clearLastChecked(id)
@@ -649,10 +651,14 @@ fun org.gotson.komga.domain.model.DownloadQueue.toDto() =
     priority = priority,
     retryCount = retryCount,
     maxRetries = maxRetries,
-    resumeAt = metadataJson?.let {
-      Regex(""""resumeAt"\s*:\s*"([^"]+)"""").find(it)?.groupValues?.get(1)
-        ?.let { ts -> runCatching { java.time.LocalDateTime.parse(ts) }.getOrNull() }
-    },
+    resumeAt =
+      metadataJson?.let {
+        Regex(""""resumeAt"\s*:\s*"([^"]+)"""")
+          .find(it)
+          ?.groupValues
+          ?.get(1)
+          ?.let { ts -> runCatching { java.time.LocalDateTime.parse(ts) }.getOrNull() }
+      },
   )
 
 fun org.gotson.komga.domain.model.Follow.toDto() =

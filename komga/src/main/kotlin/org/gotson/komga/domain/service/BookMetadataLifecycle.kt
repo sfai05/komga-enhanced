@@ -21,7 +21,6 @@ import java.time.LocalDateTime
 
 private val logger = KotlinLogging.logger {}
 
-
 @Service
 class BookMetadataLifecycle(
   private val bookMetadataProviders: List<BookMetadataProvider>,

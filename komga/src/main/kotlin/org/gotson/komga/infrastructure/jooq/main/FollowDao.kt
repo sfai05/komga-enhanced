@@ -43,9 +43,14 @@ class FollowDao(
       .fetchOne()
       ?.toDomain()
 
-  override fun existsByLibraryIdAndUrl(libraryId: String, url: String): Boolean =
+  override fun existsByLibraryIdAndUrl(
+    libraryId: String,
+    url: String,
+  ): Boolean =
     dslRO.fetchExists(
-      dslRO.selectOne().from(table)
+      dslRO
+        .selectOne()
+        .from(table)
         .where(libraryIdField.eq(libraryId))
         .and(urlField.eq(url)),
     )
@@ -95,7 +100,10 @@ class FollowDao(
     dslRW.deleteFrom(table).where(libraryIdField.eq(libraryId)).execute()
   }
 
-  override fun updateLastChecked(id: String, checkedAt: LocalDateTime) {
+  override fun updateLastChecked(
+    id: String,
+    checkedAt: LocalDateTime,
+  ) {
     dslRW
       .update(table)
       .set(lastCheckedAtField, checkedAt)
@@ -109,11 +117,12 @@ class FollowDao(
       libraryId = get(libraryIdField)!!,
       url = get(urlField)!!,
       title = get(titleField),
-      enabled = when (val raw = get(enabledField)) {
-        is Boolean -> raw
-        is Number -> raw.toInt() != 0
-        else -> true
-      },
+      enabled =
+        when (val raw = get(enabledField)) {
+          is Boolean -> raw
+          is Number -> raw.toInt() != 0
+          else -> true
+        },
       chapterFrom = (get(chapterFromField) as? Number)?.toDouble(),
       chapterTo = (get(chapterToField) as? Number)?.toDouble(),
       addedAt = getTimestamp(addedAtField) ?: LocalDateTime.now(),

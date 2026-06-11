@@ -266,9 +266,13 @@ class ChapterChecker(
         // gallery-dl returned nothing — could be a network issue or unsupported URL.
         // Fall back to queuing so we don't silently miss new chapters.
         return ChapterCheckResult(
-          url = url, mangaId = null, title = null,
-          apiChapterCount = 0, downloadedChapterCount = 0,
-          filesystemChapterCount = 0, newChaptersEstimate = 0,
+          url = url,
+          mangaId = null,
+          title = null,
+          apiChapterCount = 0,
+          downloadedChapterCount = 0,
+          filesystemChapterCount = 0,
+          newChaptersEstimate = 0,
           needsDownload = true,
         )
       }
@@ -277,7 +281,9 @@ class ChapterChecker(
       val missingCount = existence.values.count { !it }
       logger.debug { "Non-MangaDex check for $url: total=${chapters.size}, downloaded=$downloadedCount, missing=$missingCount" }
       ChapterCheckResult(
-        url = url, mangaId = null, title = null,
+        url = url,
+        mangaId = null,
+        title = null,
         apiChapterCount = chapters.size,
         downloadedChapterCount = downloadedCount,
         filesystemChapterCount = 0,
@@ -287,10 +293,15 @@ class ChapterChecker(
     } catch (e: Exception) {
       logger.warn(e) { "Failed to check non-MangaDex URL $url, will attempt download" }
       ChapterCheckResult(
-        url = url, mangaId = null, title = null,
-        apiChapterCount = 0, downloadedChapterCount = 0,
-        filesystemChapterCount = 0, newChaptersEstimate = 0,
-        needsDownload = true, error = e.message,
+        url = url,
+        mangaId = null,
+        title = null,
+        apiChapterCount = 0,
+        downloadedChapterCount = 0,
+        filesystemChapterCount = 0,
+        newChaptersEstimate = 0,
+        needsDownload = true,
+        error = e.message,
       )
     }
   }

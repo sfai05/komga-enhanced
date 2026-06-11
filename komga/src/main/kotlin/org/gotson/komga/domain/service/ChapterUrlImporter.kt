@@ -138,8 +138,22 @@ class ChapterUrlImporter(
     try {
       ZipFile(cbzFile).use { zf ->
         val comment = zf.comment
-        val chapterNumber = comment?.let { chapterNumberCommentRegex.find(it)?.groupValues?.get(1)?.toDoubleOrNull() }
-        val volume = comment?.let { volumeCommentRegex.find(it)?.groupValues?.get(1)?.toIntOrNull() }
+        val chapterNumber =
+          comment?.let {
+            chapterNumberCommentRegex
+              .find(it)
+              ?.groupValues
+              ?.get(1)
+              ?.toDoubleOrNull()
+          }
+        val volume =
+          comment?.let {
+            volumeCommentRegex
+              .find(it)
+              ?.groupValues
+              ?.get(1)
+              ?.toIntOrNull()
+          }
 
         // MangaDex: ZIP comment has a proper UUID in "Chapter UUID: <uuid>" format
         val uuid = comment?.let { chapterUuidRegex.find(it)?.groupValues?.get(1) }
@@ -156,11 +170,16 @@ class ChapterUrlImporter(
         // which is the same URL returned by fetchGalleryDlChapterMapping.
         val entry = zf.getEntry("ComicInfo.xml") ?: return null
         val xml = zf.getInputStream(entry).use { it.readBytes().toString(Charsets.UTF_8) }
-        val webUrl = comicInfoWebRegex.find(xml)
-          ?.groupValues?.get(1)
-          ?.replace("&amp;", "&")?.replace("&lt;", "<")
-          ?.replace("&gt;", ">").takeIf { it?.startsWith("http") == true }
-          ?: return null
+        val webUrl =
+          comicInfoWebRegex
+            .find(xml)
+            ?.groupValues
+            ?.get(1)
+            ?.replace("&amp;", "&")
+            ?.replace("&lt;", "<")
+            ?.replace("&gt;", ">")
+            .takeIf { it?.startsWith("http") == true }
+            ?: return null
         return ExtractedChapterData(url = webUrl, chapter = chapterNumber, volume = volume)
       }
     } catch (e: Exception) {

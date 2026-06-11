@@ -556,13 +556,15 @@ class GalleryDlWrapper(
               }
             }
           } else {
-            val needed = galleryDlChapterMap.values.filter {
-              val num = it.chapterNumber?.toDoubleOrNull()
-              if (num != null && num in keptComplete) return@filter false
-              if (chapterFrom != null && num != null && num < chapterFrom) return@filter false
-              if (chapterTo != null && num != null && num > chapterTo) return@filter false
-              true
-            }.sortedBy { it.chapterNumber?.toDoubleOrNull() ?: Double.MAX_VALUE }
+            val needed =
+              galleryDlChapterMap.values
+                .filter {
+                  val num = it.chapterNumber?.toDoubleOrNull()
+                  if (num != null && num in keptComplete) return@filter false
+                  if (chapterFrom != null && num != null && num < chapterFrom) return@filter false
+                  if (chapterTo != null && num != null && num > chapterTo) return@filter false
+                  true
+                }.sortedBy { it.chapterNumber?.toDoubleOrNull() ?: Double.MAX_VALUE }
             totalChapters = needed.size
             val inputFile = File.createTempFile("gallery-dl-resume-", ".txt")
             inputFile.writeText(needed.joinToString("\n") { it.chapterUrl })
@@ -593,7 +595,9 @@ class GalleryDlWrapper(
 
         onProcessStarted(process)
         var lastProgress = 0
-        val bulkRateLimitHit = java.util.concurrent.atomic.AtomicBoolean(false)
+        val bulkRateLimitHit =
+          java.util.concurrent.atomic
+            .AtomicBoolean(false)
         if (totalChapters > 0) {
           val done = filesDownloaded.get()
           onProgress(DownloadProgress(done, totalChapters, done * 100 / totalChapters, "Resuming download"))
@@ -691,7 +695,12 @@ class GalleryDlWrapper(
             .forEach { cbzFile ->
               val target = File(destDir, cbzFile.name)
               if (!target.exists()) {
-                try { java.nio.file.Files.move(cbzFile.toPath(), target.toPath()) } catch (e: Exception) { logger.warn(e) { "Failed to move $cbzFile on rate-limit" } }
+                try {
+                  java.nio.file.Files
+                    .move(cbzFile.toPath(), target.toPath())
+                } catch (e: Exception) {
+                  logger.warn(e) { "Failed to move $cbzFile on rate-limit" }
+                }
               }
             }
           allFilesOnDisk
