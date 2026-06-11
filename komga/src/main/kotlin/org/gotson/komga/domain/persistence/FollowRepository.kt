@@ -5,11 +5,24 @@ import java.time.LocalDateTime
 
 interface FollowRepository {
   fun findAllByLibraryId(libraryId: String): List<Follow>
+
   fun findById(id: String): Follow?
-  fun existsByLibraryIdAndUrl(libraryId: String, url: String): Boolean
+
+  fun existsByLibraryIdAndUrl(
+    libraryId: String,
+    url: String,
+  ): Boolean
+
   fun insert(follow: Follow)
+
   fun update(follow: Follow)
+
   fun delete(id: String)
+
   fun deleteAllByLibraryId(libraryId: String)
-  fun updateLastChecked(id: String, checkedAt: LocalDateTime)
+
+  fun updateLastChecked(
+    id: String,
+    checkedAt: LocalDateTime,
+  )
 }
